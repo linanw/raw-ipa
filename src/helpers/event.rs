@@ -87,6 +87,7 @@ impl Helper {
             .threshold_decrypt(&self.matchkey_decrypt);
         EventReport {
             encrypted_match_keys: partially_decrypted_matchkeys,
+            secret_shares: None,
         }
     }
 

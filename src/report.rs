@@ -78,6 +78,7 @@ pub struct EventReport {
     //h3_secret_shares: EncryptedSecretShares,
     //h4_secret_shares: EncryptedSecretShares,
     //range_proofs: ,
+    pub secret_shares: Option<Vec<u8>>
 }
 
 impl EventReport {

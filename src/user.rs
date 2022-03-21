@@ -4,6 +4,9 @@ use crate::report::{EncryptedMatchkeys, EventReport};
 use crate::threshold::{Ciphertext, EncryptionKey as ThresholdEncryptionKey, RistrettoPoint};
 use hkdf::Hkdf;
 use log::trace;
+use prio::client::*;
+use prio::encrypt::*;
+use prio::field::*;
 use rand::{thread_rng, RngCore};
 #[cfg(feature = "enable-serde")]
 use serde::{Deserialize, Serialize};
@@ -148,7 +151,62 @@ impl User {
             .collect();
         EventReport {
             encrypted_match_keys: EncryptedMatchkeys::from_matchkeys(m),
+            secret_shares: None,
         }
+    }
+
+    /// Generate secret share pairs of event report with libprio-rs
+    /// libprio-rs currently support only Vec 0/1 values. 
+    #[must_use]
+    pub fn generate_event_report_with_value_as_secret_shares(
+        &self,
+        providers: &[&str],
+        trigger_value: u32,
+    ) -> (EventReport, EventReport) {
+        // tuple of 2 events.
+        let m: HashMap<_, _> = providers
+            .iter()
+            .map(|p| ((*p).to_string(), self.encrypt_matchkey(p)))
+            .collect();
+
+        // generate 2 key pairs to assume user client have already received public_keys from help1 and help2
+        let priv_key1 = PrivateKey::from_base64(
+                "BIl6j+J6dYttxALdjISDv6ZI4/VWVEhUzaS05LgrsfswmbLOgN\
+                 t9HUC2E0w+9RqZx3XMkdEHBHfNuCSMpOwofVSq3TfyKwn0NrftKisKKVSaTOt5seJ67P5QL4hxgPWvxw==",
+            )
+            .unwrap();
+        let priv_key2 = PrivateKey::from_base64(
+                "BNNOqoU54GPo+1gTPv+hCgA9U2ZCKd76yOMrWa1xTWgeb4LhF\
+                 LMQIQoRwDVaW64g/WTdcxT4rDULoycUNFB60LER6hPEHg/ObBnRPV1rwS3nj9Bj0tbjVPPyL9p8QW8B+w==",
+            )
+            .unwrap();
+        let pub_key1 = PublicKey::from(&priv_key1);
+        let pub_key2 = PublicKey::from(&priv_key2);
+
+        let dim = 1;
+        let mut prio_client = Client::new(dim, pub_key1, pub_key2).unwrap();
+        let values = [trigger_value]
+            .iter()
+            .map(|x| Field32::from(*x))
+            .collect::<Vec<Field32>>();
+
+        //
+        // create a pair of secret shares.
+        // 
+        let (share1, share2) = prio_client.encode_simple(&values).unwrap();
+
+        let event_report_with_share1 = EventReport {
+            encrypted_match_keys: EncryptedMatchkeys::from_matchkeys(m.clone()),
+            secret_shares: Some(share1),
+        };
+
+        let event_report_with_share2 = EventReport {
+            encrypted_match_keys: EncryptedMatchkeys::from_matchkeys(m),
+            secret_shares: Some(share2),
+
+        };
+
+        (event_report_with_share1, event_report_with_share2)
     }
 }
 
