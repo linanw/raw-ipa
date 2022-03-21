@@ -156,7 +156,7 @@ impl User {
     }
 
     /// Generate secret share pairs of event report with libprio-rs
-    /// libprio-rs currently support only Vec 0/1 values. 
+    /// libprio-rs currently support only Vec 0/1 values.
     #[must_use]
     pub fn generate_event_report_with_value_as_secret_shares(
         &self,
@@ -169,7 +169,8 @@ impl User {
             .map(|p| ((*p).to_string(), self.encrypt_matchkey(p)))
             .collect();
 
-        // generate 2 key pairs to assume user client have already received public_keys from help1 and help2
+        // generate 2 key pairs to assume user client have already received public_keys from helpers.
+        // TODO: move to helper's modules.
         let priv_key1 = PrivateKey::from_base64(
                 "BIl6j+J6dYttxALdjISDv6ZI4/VWVEhUzaS05LgrsfswmbLOgN\
                  t9HUC2E0w+9RqZx3XMkdEHBHfNuCSMpOwofVSq3TfyKwn0NrftKisKKVSaTOt5seJ67P5QL4hxgPWvxw==",
@@ -192,7 +193,7 @@ impl User {
 
         //
         // create a pair of secret shares.
-        // 
+        //
         let (share1, share2) = prio_client.encode_simple(&values).unwrap();
 
         let event_report_with_share1 = EventReport {
@@ -203,7 +204,6 @@ impl User {
         let event_report_with_share2 = EventReport {
             encrypted_match_keys: EncryptedMatchkeys::from_matchkeys(m),
             secret_shares: Some(share2),
-
         };
 
         (event_report_with_share1, event_report_with_share2)
@@ -217,6 +217,9 @@ mod tests {
         DecryptionKey as ThresholdDecryptionKey, EncryptionKey as ThresholdEncryptionKey,
         RistrettoPoint,
     };
+    use prio::encrypt::*;
+    use prio::field::*;
+    use prio::server::*;
     use rand::thread_rng;
 
     const MATCHKEY: &str = "matchkey";
@@ -361,5 +364,109 @@ mod tests {
         // Once fully decrypted, only one combination should match
         assert_eq!(fully_decrypted_r1, fully_decrypted_r2,);
         assert_eq!(fully_decrypted_r1.count_matches(&fully_decrypted_r2), 1,);
+    }
+
+    #[test]
+    fn generate_event_report_with_value_as_secret_shares() {
+        const PROVIDER_1: &str = "social.example";
+        const PROVIDER_2: &str = "email.example";
+        const PROVIDER_3: &str = "news.example";
+        const MATCHING_MATCHKEY: &str = "this_one_matches";
+
+        let mut rng = thread_rng();
+        let d1 = ThresholdDecryptionKey::new(&mut rng);
+        let d2 = ThresholdDecryptionKey::new(&mut rng);
+        let tek = ThresholdEncryptionKey::new(&[d1.encryption_key(), d2.encryption_key()]);
+
+        let providers = [PROVIDER_1, PROVIDER_2, PROVIDER_3];
+
+        let mut u1 = User::new(0, tek);
+        u1.set_matchkey(PROVIDER_1, MATCHING_MATCHKEY);
+        u1.set_matchkey(PROVIDER_2, "something_random");
+        u1.set_matchkey(PROVIDER_3, "also_very_random");
+
+        let mut u2 = User::new(1, tek);
+        u2.set_matchkey(PROVIDER_1, MATCHING_MATCHKEY);
+        u2.set_matchkey(PROVIDER_2, "does_not_match");
+        u2.set_matchkey(PROVIDER_3, "also_does_not_match");
+
+        // generate event report as pair of secret shares
+        let (r1_1, r1_2) = u1.generate_event_report_with_value_as_secret_shares(&providers, 1);
+        let (r2_1, r2_2) = u2.generate_event_report_with_value_as_secret_shares(&providers, 0);
+
+        // No combination of encrypted match keys should match
+        assert_eq!(r1_1.matchkeys().count_matches(r2_1.matchkeys()), 0,);
+        assert_eq!(r1_2.matchkeys().count_matches(r2_2.matchkeys()), 0,);
+
+        let fully_decrypted_r1_1 = r1_1.matchkeys().threshold_decrypt(&d1).decrypt(&d2);
+        let fully_decrypted_r2_1 = r2_1.matchkeys().threshold_decrypt(&d1).decrypt(&d2);
+
+        let fully_decrypted_r1_2 = r1_2.matchkeys().threshold_decrypt(&d1).decrypt(&d2);
+        let fully_decrypted_r2_2 = r2_2.matchkeys().threshold_decrypt(&d1).decrypt(&d2);
+
+        // Once fully decrypted, only one combination should match
+        assert_eq!(fully_decrypted_r1_1, fully_decrypted_r2_1,);
+        assert_eq!(fully_decrypted_r1_2, fully_decrypted_r2_2,);
+        assert_eq!(fully_decrypted_r1_1.count_matches(&fully_decrypted_r2_1), 1,);
+        assert_eq!(fully_decrypted_r1_2.count_matches(&fully_decrypted_r2_2), 1,);
+
+        // Match keys in shares from the same report should be the same
+        assert_eq!(fully_decrypted_r1_1, fully_decrypted_r1_2,);
+        assert_eq!(fully_decrypted_r2_1, fully_decrypted_r2_2,);
+        assert_eq!(fully_decrypted_r1_1.count_matches(&fully_decrypted_r1_2), 3,);
+        assert_eq!(fully_decrypted_r2_1.count_matches(&fully_decrypted_r2_2), 3,);
+
+        // From here to test PRIO secret share values.
+        // hard code a copy of helpers's private keys.
+        // TODO: move to helper's modules.
+        let priv_key1 = PrivateKey::from_base64(
+            "BIl6j+J6dYttxALdjISDv6ZI4/VWVEhUzaS05LgrsfswmbLOgN\
+             t9HUC2E0w+9RqZx3XMkdEHBHfNuCSMpOwofVSq3TfyKwn0NrftKisKKVSaTOt5seJ67P5QL4hxgPWvxw==",
+        )
+        .unwrap();
+        let priv_key2 = PrivateKey::from_base64(
+            "BNNOqoU54GPo+1gTPv+hCgA9U2ZCKd76yOMrWa1xTWgeb4LhF\
+             LMQIQoRwDVaW64g/WTdcxT4rDULoycUNFB60LER6hPEHg/ObBnRPV1rwS3nj9Bj0tbjVPPyL9p8QW8B+w==",
+        )
+        .unwrap();
+        let eval_at = Field32::from(564543);
+        let dim = 1;
+        //
+        // setup 2 helpers
+        //
+        let mut helper1 = Server::new(dim, true, priv_key1).unwrap();
+        let mut helper2 = Server::new(dim, false, priv_key2).unwrap();
+        //
+        // prepare SNIPs messages
+        //
+        let v1_1 = helper1
+            .generate_verification_message(eval_at, &r1_1.secret_shares.clone().unwrap())
+            .unwrap();
+        let v1_2 = helper2
+            .generate_verification_message(eval_at, &r1_2.secret_shares.clone().unwrap())
+            .unwrap();
+        let v2_1 = helper1
+            .generate_verification_message(eval_at, &r2_1.secret_shares.clone().unwrap())
+            .unwrap();
+        let v2_2 = helper2
+            .generate_verification_message(eval_at, &r2_2.secret_shares.clone().unwrap())
+            .unwrap();
+        //
+        // verify values with SNIPs
+        //
+        let _ = helper1
+            .aggregate(&r1_1.secret_shares.unwrap(), &v1_1, &v1_2)
+            .unwrap();
+        let _ = helper2
+            .aggregate(&r1_2.secret_shares.unwrap(), &v1_1, &v1_2)
+            .unwrap();
+        let _ = helper1
+            .aggregate(&r2_1.secret_shares.unwrap(), &v2_1, &v2_2)
+            .unwrap();
+        let _ = helper2
+            .aggregate(&r2_2.secret_shares.unwrap(), &v2_1, &v2_2)
+            .unwrap();
+        helper1.merge_total_shares(helper2.total_shares()).unwrap();
+        assert_eq!(helper1.total_shares(), [1],);
     }
 }
